@@ -70,6 +70,27 @@ function Get-DevOpsUserInfo {
 }
 
 # ===========================
+# Function: Get-DevOpsUserLicense
+# Retrieves Azure DevOps user entitlement/license for the given user id
+# ===========================
+function Get-DevOpsUserLicense {
+    param([string]$OrgName, [psobject]$DevOpsToken, [string]$UserId)
+    $uri = "https://vsaex.dev.azure.com/$OrgName/_apis/userentitlements/$($UserId)?api-version=7.2-preview.5"
+    $headers = @{
+        Authorization           = $DevOpsToken.AuthHeader
+        "X-TFS-FedAuthRedirect" = "Suppress"
+    }
+    try {
+        $response = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get -ErrorAction Stop
+        return $response
+    }
+    catch {
+        Write-Warning "Could not retrieve license information from Azure DevOps."
+        return $null
+    }
+}
+
+# ===========================
 # Function: Get-EntraUserInfo
 # ===========================
 function Get-EntraUserInfo {
@@ -260,6 +281,26 @@ Write-Host "DevOps User Account Name    : $($devOpsUser.properties.Account."`$va
 Write-Host "DevOps User Email           : $($devOpsUser.properties.Mail."`$value")"
 Write-Host "DevOps User OID             : $($devOpsUser.properties."http://schemas.microsoft.com/identity/claims/objectidentifier"."`$value")"
 Write-Host "DevOps User Type            : $($devOpsUser.properties.metaTypeId -eq 1 ? "Guest" :  ($devOpsUser.properties.metaTypeId -eq 0 ? "Unknown" : "Member"))"
+Write-Host
+Write-Host "--------------------------------------------------------------------------------------------"
+Write-Host "DevOps User License Info:                                                                     "
+Write-Host "--------------------------------------------------------------------------------------------"
+$devLicense = Get-DevOpsUserLicense -OrgName $OrgName -DevOpsToken $tokens.DevOps -UserId $devOpsUser.id
+if ($null -ne $devLicense.accessLevel) {
+    $alc = $devLicense.accessLevel
+    Write-Host "License type                : $($alc.accountLicenseType)"
+    write-Host "License Display Name        : $($alc.licenseDisplayName)"
+#    Write-Host "Licensing Source            : $($alc.licensingSource)"
+#    Write-Host "Assignment Source           : $($alc.assignmentSource)"
+    if ($alc.status -ne "active") {
+        Write-Host "DevOps User License Status  : $($alc.status)"
+        Write-Host "            Status Message  : $($alc.statusMessage) "
+    }
+    write-Host "Last Accessed Date          : $([System.TimeZoneInfo]::ConvertTime($devLicense.lastAccessedDate, [System.TimeZoneInfo]::Utc, [System.TimeZoneInfo]::Local))"
+}
+else {
+    Write-Host "DevOps User License        : Not found or unavailable" -ForegroundColor Yellow
+}
 Write-Host
 Write-Host "--------------------------------------------------------------------------------------------"
 Write-Host "Checking for Known Scenarios..."
