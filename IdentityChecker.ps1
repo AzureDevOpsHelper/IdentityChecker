@@ -1,7 +1,41 @@
 # ===========================
+# Script parameters
+# ===========================
+param(
+    [switch]$ForceLogout
+)
+# ===========================
 # Function: Test-Prerequisites
 # ===========================
 function Test-Prerequisites {
+    param([switch]$ForceLogout)
+    $ForceLogout = $true
+    if ($ForceLogout) {
+        Write-Host "ForceLogout requested: will attempt to log out and clear cached Azure credentials." -ForegroundColor Yellow
+        # Prefer Azure CLI logout if available
+        if (Get-Command az -ErrorAction SilentlyContinue) {
+            try {
+                az logout 2>$null
+            }
+            catch { }
+            try {
+                az account clear 2>$null
+            }
+            catch { }
+        }
+
+        # Also clear Az PowerShell contexts if the Az module is present
+        if (Get-Command Disconnect-AzAccount -ErrorAction SilentlyContinue) {
+            try { Disconnect-AzAccount -Scope CurrentUser -ErrorAction SilentlyContinue } catch { }
+            try { Clear-AzContext -Force -ErrorAction SilentlyContinue } catch { }
+        }
+        try {
+            Connect-AzAccount -WarningAction 'SilentlyContinue' -ErrorAction 'Stop' -InformationAction 'SilentlyContinue' -ProgressAction 'SilentlyContinue'
+        }
+        catch { }
+        
+    }
+
     if (-not (Get-Command az -ErrorAction SilentlyContinue)) {
         Clear-Host
         Write-Host "It seems that the Az module is not installed or not working properly."
@@ -11,13 +45,6 @@ function Test-Prerequisites {
         Write-Host "Az module installed successfully."
         Connect-AzAccount -WarningAction 'SilentlyContinue' -ErrorAction 'Stop' -InformationAction 'SilentlyContinue' -ProgressAction 'SilentlyContinue'
     }
-#    Write-Host "updating Az module..."
-#    Update-PSResource Az -ErrorAction SilentlyContinue 
-    #AZ logout 
-    #AZ account clear
-    #AZ login
-    #Get-TenantInfo
-
 }
 
 # ===========================
@@ -252,71 +279,79 @@ function Compare-GuestInfo {
 # ===========================
 # Main Script
 # ===========================
-Test-Prerequisites
-#Clear-Host
-$OrgName = Read-Host "Enter Azure DevOps Organization Name"
-$tokens = Get-AccessTokens
-$upn = Read-Host "Enter UPN to check"
-Write-Host
-Write-Host "--------------------------------------------------------------------------------------------"
-Write-Host "Entra and Entra User Info:"
-Write-Host "--------------------------------------------------------------------------------------------"
-$tenantInfo = Get-TenantInfo -GraphToken $tokens.Graph
-Write-Host "Entra Tenant Name           : $($tenantInfo.displayName)"
-Write-Host "Entra Tenant ID             : $($tenantInfo.Id)"
-$entraUser = Get-EntraUserInfo -GraphToken $tokens.Graph -UserPrincipalName $upn
-Write-Host "Entra User Principal Name   : $($entraUser.userPrincipalName)"
-Write-Host "Entra User Email            : $($entraUser.mail)"
-Write-Host "Entra User OID              : $($entraUser.id)"
-Write-Host "Entra User Type             : $($null -eq $entraUser.externalUserState ? "Member" : "Guest")"
-Write-Host "Entra User is Guest Inviter : $($entraUser.isGuestInviter)"
-Write-Host
-Write-Host "--------------------------------------------------------------------------------------------"
-Write-Host "Azure DevOps User Info:                                                                     "
-Write-Host "--------------------------------------------------------------------------------------------"
-$devOpsUser = Get-DevOpsUserInfo -OrgName $OrgName -DevOpsToken $tokens.DevOps -UserPrincipalName $upn
-Write-Host "Devops User VSID            : $($devOpsUser.id)"
-Write-Host "Devops User Tenant ID       : $($devOpsUser.properties.Domain."`$value")"
-Write-Host "DevOps User Account Name    : $($devOpsUser.properties.Account."`$value")"
-Write-Host "DevOps User Email           : $($devOpsUser.properties.Mail."`$value")"
-Write-Host "DevOps User OID             : $($devOpsUser.properties."http://schemas.microsoft.com/identity/claims/objectidentifier"."`$value")"
-Write-Host "DevOps User Type            : $($devOpsUser.properties.metaTypeId -eq 1 ? "Guest" :  ($devOpsUser.properties.metaTypeId -eq 0 ? "Unknown" : "Member"))"
-Write-Host
-Write-Host "--------------------------------------------------------------------------------------------"
-Write-Host "DevOps User License Info:                                                                     "
-Write-Host "--------------------------------------------------------------------------------------------"
-$devLicense = Get-DevOpsUserLicense -OrgName $OrgName -DevOpsToken $tokens.DevOps -UserId $devOpsUser.id
-if ($null -ne $devLicense.accessLevel) {
-    $alc = $devLicense.accessLevel
-    Write-Host "License type                : $($alc.accountLicenseType)"
-    write-Host "License Display Name        : $($alc.licenseDisplayName)"
-#    Write-Host "Licensing Source            : $($alc.licensingSource)"
-#    Write-Host "Assignment Source           : $($alc.assignmentSource)"
-    if ($alc.status -ne "active") {
-        Write-Host "DevOps User License Status  : $($alc.status)"
-        Write-Host "            Status Message  : $($alc.statusMessage) "
+try 
+{
+    Test-Prerequisites -ForceLogout:$ForceLogout
+    #Clear-Host
+    $OrgName = Read-Host "Enter Azure DevOps Organization Name"
+    $tokens = Get-AccessTokens
+    $upn = Read-Host "Enter UPN to check"
+    Write-Host "--------------------------------------------------------------------------------------------"
+    Write-Host "Logged in User Info:"
+    Write-Host "--------------------------------------------------------------------------------------------"
+    Write-Host "Logged into Entra as        : $($tokens.Graph.UserId)"
+    Write-Host "Logged into Azure DevOps as : $($tokens.DevOps.UserId)"
+    Write-Host
+    Write-Host "--------------------------------------------------------------------------------------------"
+    Write-Host "Entra and Entra User Info:"
+    Write-Host "--------------------------------------------------------------------------------------------"
+    $tenantInfo = Get-TenantInfo -GraphToken $tokens.Graph
+    Write-Host "Entra Tenant Name           : $($tenantInfo.displayName)"
+    Write-Host "Entra Tenant ID             : $($tenantInfo.Id)"
+    $entraUser = Get-EntraUserInfo -GraphToken $tokens.Graph -UserPrincipalName $upn
+    Write-Host "Entra User Principal Name   : $($entraUser.userPrincipalName)"
+    Write-Host "Entra User Email            : $($entraUser.mail)"
+    Write-Host "Entra User OID              : $($entraUser.id)"
+    Write-Host "Entra User Type             : $($null -eq $entraUser.externalUserState ? "Member" : "Guest")"
+    Write-Host "Entra User is Guest Inviter : $($entraUser.isGuestInviter)"
+    Write-Host
+    Write-Host "--------------------------------------------------------------------------------------------"
+    Write-Host "Azure DevOps User Info:                                                                     "
+    Write-Host "--------------------------------------------------------------------------------------------"
+    $devOpsUser = Get-DevOpsUserInfo -OrgName $OrgName -DevOpsToken $tokens.DevOps -UserPrincipalName $upn
+    Write-Host "Devops User VSID            : $($devOpsUser.id)"
+    Write-Host "Devops User Tenant ID       : $($devOpsUser.properties.Domain."`$value")"
+    Write-Host "DevOps User Account Name    : $($devOpsUser.properties.Account."`$value")"
+    Write-Host "DevOps User Email           : $($devOpsUser.properties.Mail."`$value")"
+    Write-Host "DevOps User OID             : $($devOpsUser.properties."http://schemas.microsoft.com/identity/claims/objectidentifier"."`$value")"
+    Write-Host "DevOps User Type            : $($devOpsUser.properties.metaTypeId -eq 1 ? "Guest" :  ($devOpsUser.properties.metaTypeId -eq 0 ? "Unknown" : "Member"))"
+    Write-Host
+    Write-Host "--------------------------------------------------------------------------------------------"
+    Write-Host "DevOps User License Info:                                                                     "
+    Write-Host "--------------------------------------------------------------------------------------------"
+    $devLicense = Get-DevOpsUserLicense -OrgName $OrgName -DevOpsToken $tokens.DevOps -UserId $devOpsUser.id
+    if ($null -ne $devLicense.accessLevel) {
+        $alc = $devLicense.accessLevel
+        Write-Host "License type                : $($alc.accountLicenseType)"
+        write-Host "License Display Name        : $($alc.licenseDisplayName)"
+    #    Write-Host "Licensing Source            : $($alc.licensingSource)"
+    #    Write-Host "Assignment Source           : $($alc.assignmentSource)"
+        if ($alc.status -ne "active") {
+            Write-Host "DevOps User License Status  : $($alc.status)"
+            Write-Host "            Status Message  : $($alc.statusMessage) "
+        }
+        write-Host "Last Accessed Date          : $([System.TimeZoneInfo]::ConvertTime($devLicense.lastAccessedDate, [System.TimeZoneInfo]::Utc, [System.TimeZoneInfo]::Local))"
     }
-    write-Host "Last Accessed Date          : $([System.TimeZoneInfo]::ConvertTime($devLicense.lastAccessedDate, [System.TimeZoneInfo]::Utc, [System.TimeZoneInfo]::Local))"
+    else {
+        Write-Host "DevOps User License        : Not found or unavailable" -ForegroundColor Yellow
+    }
+    Write-Host
+    Write-Host "--------------------------------------------------------------------------------------------"
+    Write-Host "Checking for Known Scenarios..."
+    Write-Host "--------------------------------------------------------------------------------------------"
+    Compare-Casing     -DevOpsUser $devOpsUser -EntraUser $entraUser
+    Compare-OID        -DevOpsUser $devOpsUser -EntraUser $entraUser
+    Compare-TenantId   -DevOpsUser $devOpsUser -TenantId  $tenantInfo
+    Compare-UserType   -DevOpsUser $devOpsUser -EntraUser $entraUser
+    Compare-GuestRoles -DevOpsUser $devOpsUser -EntraUser $entraUser
+    Compare-GuestInfo  -DevOpsUser $devOpsUser -EntraUser $entraUser
+    Write-Host
+    Write-Host
 }
-else {
-    Write-Host "DevOps User License        : Not found or unavailable" -ForegroundColor Yellow
+catch {
+    Write-Host "An error occurred: $_" -ForegroundColor Red
+    Write-Host
+    Write-Host "Please verify that you are logged in with the correct account that has access to both Entra and Azure DevOps." -ForegroundColor Yellow
+    Write-Host "You can try running the script again with the -ForceLogout parameter to clear cached credentials." -ForegroundColor Yellow
+    Write-Host
 }
-Write-Host
-Write-Host "--------------------------------------------------------------------------------------------"
-Write-Host "Checking for Known Scenarios..."
-Write-Host "--------------------------------------------------------------------------------------------"
-Compare-Casing     -DevOpsUser $devOpsUser -EntraUser $entraUser
-Compare-OID        -DevOpsUser $devOpsUser -EntraUser $entraUser
-Compare-TenantId   -DevOpsUser $devOpsUser -TenantId  $tenantInfo
-Compare-UserType   -DevOpsUser $devOpsUser -EntraUser $entraUser
-Compare-GuestRoles -DevOpsUser $devOpsUser -EntraUser $entraUser
-Compare-GuestInfo  -DevOpsUser $devOpsUser -EntraUser $entraUser
-Write-Host
-Write-Host
-
-# ===========================
-# To Dos:
-# - Add "is User a guest in Entra, do they have any roles?" 
-# - Add "possibly auth failures due to CAP (e.g. IP misconfig where they hit us with multiple IPs, or CAPs apply to IPv4 but not IPv6, etc.)"
-# - Add "Member user stuck as a guest on the DevOps side"
-# ===========================
