@@ -9,7 +9,6 @@ param(
 # ===========================
 function Test-Prerequisites {
     param([switch]$ForceLogout)
-    $ForceLogout = $true
     if ($ForceLogout) {
         Write-Host "ForceLogout requested: will attempt to log out and clear cached Azure credentials." -ForegroundColor Yellow
         # Prefer Azure CLI logout if available

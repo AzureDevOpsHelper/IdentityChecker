@@ -28,6 +28,24 @@ Notes:
 - The script attempts to install the `Az` module if it is missing (it uses `Install-Module -Name Az -Scope CurrentUser`).
 - The script uses `Get-AzAccessToken` to obtain tokens for Microsoft Graph and Azure DevOps endpoints.
 
+Switching accounts / forcing a logout
+------------------------------------
+
+If you need to change the account the script uses (for example to test a different user or tenant), the script provides a `-ForceLogout` switch which clears cached credentials before running the checks.
+
+- What it does: when you run the script with `-ForceLogout` it will attempt to log out any existing Azure CLI session (`az logout` / `az account clear`) and clear Az PowerShell contexts (`Disconnect-AzAccount`, `Clear-AzContext`) where available.
+- When to use it: use this when you want the script to run under a different Azure identity than the one currently cached on the machine, or when you need to fully re-authenticate.
+
+Example (force logout, then run the checks):
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File 'IdentityChecker.ps1' -ForceLogout
+```
+
+Notes:
+- The logout steps are best-effort and wrapped in try/catch so the script won't fail if a tool is missing.
+- After forcing logout you will be prompted to sign in again.
+
 **What the script prints**
 - **Entra Tenant Info**: Tenant display name and tenant id.
 - **Entra User Info**: UPN, email, OID, user type (Member/Guest), whether the user has the Guest Inviter role.
