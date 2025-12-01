@@ -2,17 +2,17 @@
 
 IdentityChecker is a small PowerShell helper that gathers Microsoft Entra (Azure AD) and Azure DevOps identity data for a given user UPN, then runs a set of checks to surface common identity issues (UPN casing, OID mismatch, tenant mismatch, guest-role problems, license info, and profile status).
 
-##Quick overview
+### Quick overview
 - Collects Microsoft Graph user info (UPN, e-mail, object id, guest/member state, roles).
 - Collects Azure DevOps identity and entitlement info (VSID, tenant, account, OID, user type, license/entitlement).
 - Calls the Azure DevOps Profiles API and surfaces profile state and profile error messages (useful for Access Denied / permission errors).
 
-###Prerequisites
+### Prerequisites
 - PowerShell (Windows PowerShell or PowerShell Core).
 - `Az` PowerShell module (the script will attempt to install it into the current user scope if missing).
 - An account able to call Microsoft Graph and Azure DevOps APIs (you may need to run `Connect-AzAccount`).
 
-###Usage
+### Usage
 1. Open a PowerShell prompt in the repository folder containing `IdentityChecker.ps1`.
 2. Run the script interactively:
 
@@ -22,7 +22,7 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File 'IdentityChecker.ps1'
 
 3. Enter the Azure DevOps organization name and the UPN to inspect when prompted.
 
-###Force logout / switching accounts
+### Force logout / switching accounts
 --------------------------------
 
 If your workstation has a cached Azure identity and you need to run the checks using a different account, use the `-ForceLogout` switch. This makes the script attempt to clear cached credentials before collecting tokens.
@@ -41,7 +41,7 @@ What the script prints
 - License / entitlement info from the User Entitlements API
 - Profile state and, on API errors, the Profiles API error payload including `customProperties` and `message` (useful for diagnosing access denied scenarios)
 
-Example output
+### Example output
 --------------
 The following is example output you may see when running the script. Values are illustrative.
 
@@ -92,17 +92,17 @@ Not a Guest User, skipping Entra Guest Info check.
 
 ```
 
-###Troubleshooting
+### Troubleshooting
 - If the script cannot obtain tokens, run `Connect-AzAccount` and ensure the account has appropriate permissions (Graph + DevOps).
 
-###Extending / Contributing
+### Extending / Contributing
 - The script is intentionally small and easy to extend.
 
-###Files
+### Files
 - `IdentityChecker.ps1`: Main script that performs all collection and checks.
 - `LICENSE`: Repository license file.
 
-###License & support
+### License & support
 - See the repository `LICENSE` file for licensing details.
 - For issues or feature requests, open an issue in the repository.
 
