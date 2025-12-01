@@ -1,79 +1,110 @@
 # IdentityChecker
 
-IdentityChecker is a small PowerShell helper script that gathers information about an Azure DevOps user and the corresponding Microsoft Entra (Azure AD) account, then checks for common identity mismatches and known issues that can cause login, authorization, or invitation problems.
+IdentityChecker is a small PowerShell helper that gathers Microsoft Entra (Azure AD) and Azure DevOps identity data for a given user UPN, then runs a set of checks to surface common identity issues (UPN casing, OID mismatch, tenant mismatch, guest-role problems, license info, and profile status).
 
-**Quick summary:** The script fetches access tokens (Graph and DevOps), reads Entra and Azure DevOps user records for a given UPN, and runs a set of checks (UPN casing, object id, tenant id, user type, guest roles, and guest email/UPN mismatches).
+##Quick overview
+- Collects Microsoft Graph user info (UPN, e-mail, object id, guest/member state, roles).
+- Collects Azure DevOps identity and entitlement info (VSID, tenant, account, OID, user type, license/entitlement).
+- Calls the Azure DevOps Profiles API and surfaces profile state and profile error messages (useful for Access Denied / permission errors).
 
-**Features**
-- **Collects Entra (Microsoft Graph) user information**: UPN, email, object id, creation type, external user state, and 'Guest Inviter' role.
-- **Collects Azure DevOps identity information**: VSID, tenant id, account name, email, object id, and meta type.
-- **Automated checks**: Compares UPN casing, OID, tenant id, user type, guest inviter role, and guest email/UPN mismatches and prints clear actionable guidance.
+###Prerequisites
+- PowerShell (Windows PowerShell or PowerShell Core).
+- `Az` PowerShell module (the script will attempt to install it into the current user scope if missing).
+- An account able to call Microsoft Graph and Azure DevOps APIs (you may need to run `Connect-AzAccount`).
 
-**Prerequisites**
-- **PowerShell** (Windows PowerShell or PowerShell Core). Script is written for common PowerShell on Windows.
-- **Az PowerShell module** (the script will attempt to install the `Az` module into the current user scope if it is not available).
-- **Azure account access**: an account able to call Microsoft Graph and Azure DevOps APIs. Running `Connect-AzAccount` may be necessary.
-
-**Quick Start / Usage**
+###Usage
 1. Open a PowerShell prompt in the repository folder containing `IdentityChecker.ps1`.
 2. Run the script interactively:
 
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File 'IdentityChecker.ps1'
 ```
-pwsh -File .\IdentityChecker.ps1
-```
 
-3. When prompted, enter your Azure DevOps organization name (short org name) and the UPN you want to check (e.g. `user@contoso.com`).
+3. Enter the Azure DevOps organization name and the UPN to inspect when prompted.
 
-Notes:
-- The script attempts to install the `Az` module if it is missing (it uses `Install-Module -Name Az -Scope CurrentUser`).
-- The script uses `Get-AzAccessToken` to obtain tokens for Microsoft Graph and Azure DevOps endpoints.
+###Force logout / switching accounts
+--------------------------------
 
-Switching accounts / forcing a logout
-------------------------------------
+If your workstation has a cached Azure identity and you need to run the checks using a different account, use the `-ForceLogout` switch. This makes the script attempt to clear cached credentials before collecting tokens.
 
-If you need to change the account the script uses (for example to test a different user or tenant), the script provides a `-ForceLogout` switch which clears cached credentials before running the checks.
-
-- What it does: when you run the script with `-ForceLogout` it will attempt to log out any existing Azure CLI session (`az logout` / `az account clear`) and clear Az PowerShell contexts (`Disconnect-AzAccount`, `Clear-AzContext`) where available.
-- When to use it: use this when you want the script to run under a different Azure identity than the one currently cached on the machine, or when you need to fully re-authenticate.
-
-Example (force logout, then run the checks):
+- What it does: runs `az logout` / `az account clear` (if Azure CLI is available) and `Disconnect-AzAccount` / `Clear-AzContext` (if Az PowerShell cmdlets are available). It then continues and will prompt you to sign-in again when tokens are requested.
+- Example:
 
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File 'IdentityChecker.ps1' -ForceLogout
 ```
 
-Notes:
-- The logout steps are best-effort and wrapped in try/catch so the script won't fail if a tool is missing.
-- After forcing logout you will be prompted to sign in again.
+What the script prints
+- Logged-in user info (the account used to fetch tokens)
+- Entra tenant and user details (display name, id, UPN, email, OID, member/guest state, Guest Inviter role)
+- Azure DevOps identity details (VSID, tenant id, account name, email, OID, DevOps user type)
+- License / entitlement info from the User Entitlements API
+- Profile state and, on API errors, the Profiles API error payload including `customProperties` and `message` (useful for diagnosing access denied scenarios)
 
-**What the script prints**
-- **Entra Tenant Info**: Tenant display name and tenant id.
-- **Entra User Info**: UPN, email, OID, user type (Member/Guest), whether the user has the Guest Inviter role.
-- **Azure DevOps User Info**: VSID, tenant id, account name, email, OID, and DevOps user type (Guest/Member/Unknown).
-- **Checks and guidance**: The script runs and prints results for:
-	- UPN casing mismatch (DevOps vs Entra)
-	- OID mismatch
-	- Tenant ID mismatch
-	- User type mismatch (Guest vs Member)
-	- Missing Guest Inviter role for guest users
-	- Guest UPN/email mismatch and suggested remediation steps
+Example output
+--------------
+The following is example output you may see when running the script. Values are illustrative.
 
-**Common Troubleshooting**
-- If a user is not found in Azure DevOps, verify the `OrgName` is correct and that the running account has permission to query the organization.
-- If the script cannot obtain tokens, run `Connect-AzAccount` and ensure the account has appropriate permissions (Graph + DevOps). The script will also attempt to call `Install-Module` if `Az` is not present — run PowerShell as an Administrator if you encounter permission errors when installing modules.
-- If you see tenant mismatches, verify the user is signing into the correct tenant (try a private browser session or confirm the tenant in the account info).
-- For complex issues (OID or tenant mismatches that affect login), consider opening a Microsoft support case and include the script output.
+```text
+--------------------------------------------------------------------------------------------
+Logged in User Info:
+--------------------------------------------------------------------------------------------
+Logged into Entra as        : steve.rogers@contoso.com
+Logged into Azure DevOps as : steve.rogers@contoso.com
 
-**Extending / Contributing**
-- The script is intentionally small and easy to extend. Suggested improvements already noted in the script include: deeper role checks, checks for Conditional Access / CAP-related failures, and additional handling for member users stuck as guests on the DevOps side.
+--------------------------------------------------------------------------------------------
+Entra and Entra User Info:
+--------------------------------------------------------------------------------------------
+Entra Tenant Name           : Contoso Ltd
+Entra Tenant ID             : 0d49ce9f-27ea-4f77-9d99-fbd19afb6195
+Entra User Principal Name   : steve.rogers@contoso.com
+Entra User Email            : steve.rogers@contoso.com
+Entra User OID              : 9561209c-26db-44c8-bd86-13b18aca4414
+Entra User Type             : Member
+Entra User is Guest Inviter : False
 
-**Files**
+--------------------------------------------------------------------------------------------
+Azure DevOps User Info:
+--------------------------------------------------------------------------------------------
+Devops User VSID            : bdecc96a-d3cc-471e-a4e4-11d0073b803b
+Devops User Tenant ID       : 0d49ce9f-27ea-4f77-9d99-fbd19afb6195
+DevOps User Account Name    : steve.rogers@contoso.com
+DevOps User Email           : steve.rogers@contoso.com
+DevOps User OID             : 9561209c-26db-44c8-bd86-13b18aca4414
+DevOps User Type            : Member
+
+--------------------------------------------------------------------------------------------
+DevOps User License Info:
+--------------------------------------------------------------------------------------------
+License type                : Express
+License Display Name        : Basic + Test Plans
+Last Accessed Date          : 11/21/2025 10:32:15 AM
+
+--------------------------------------------------------------------------------------------
+Checking for Known Scenarios...
+--------------------------------------------------------------------------------------------
+UPN Casing matches.
+OID matches.
+Tenant ID matches.
+User Type matches.
+Not a Guest User, skipping Guest Role check.
+Not a Guest User, skipping Entra Guest Info check.
+
+```
+
+###Troubleshooting
+- If the script cannot obtain tokens, run `Connect-AzAccount` and ensure the account has appropriate permissions (Graph + DevOps).
+
+###Extending / Contributing
+- The script is intentionally small and easy to extend.
+
+###Files
 - `IdentityChecker.ps1`: Main script that performs all collection and checks.
 - `LICENSE`: Repository license file.
 
-**License & Support**
+###License & support
 - See the repository `LICENSE` file for licensing details.
 - For issues or feature requests, open an issue in the repository.
 
---
-Generated by the repository owner to help diagnose identity issues between Microsoft Entra and Azure DevOps.
+---
+Generated to help diagnose identity issues between Microsoft Entra and Azure DevOps.
