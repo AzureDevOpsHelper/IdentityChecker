@@ -107,4 +107,4 @@ Not a Guest User, skipping Entra Guest Info check.
 - For issues or feature requests, open an issue in the repository.
 
 ---
-Generated to help diagnose identity issues between Microsoft Entra and Azure DevOps.
+Written to help diagnose identity issues between Microsoft Entra and Azure DevOps.
