@@ -121,7 +121,8 @@ function Get-DevOpsUserLicense {
 # ===========================
 function Get-EntraUserInfo {
     param([psobject]$GraphToken, [string]$UserPrincipalName)
-    $uri = "https://graph.microsoft.com/v1.0/users/$($UserPrincipalName)?`$select=id,userPrincipalName,creationType,externalUserState,displayName,mail"
+    # Use filter query for better compatibility with external/guest users
+    $uri = "https://graph.microsoft.com/v1.0/users?`$filter=((userPrincipalName eq '$([System.Uri]::EscapeDataString($UserPrincipalName))') or (Mail eq '$([System.Uri]::EscapeDataString($UserPrincipalName))'))&`$select=id,userPrincipalName,creationType,userType,externalUserState,displayName,mail"
     $headers = @{
         Authorization           = $GraphToken.AuthHeader
         "X-TFS-FedAuthRedirect" = "Suppress"
@@ -129,12 +130,19 @@ function Get-EntraUserInfo {
     }
     $response = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
 
-    $uri = "https://graph.microsoft.com/v1.0/users/$($response.id)/appRoleAssignments?`$filter=resourceDisplayName eq 'Guest Inviter'"
+    if ($response.value.Count -eq 0) {
+        Write-Warning "User '$UserPrincipalName' not found in Entra."
+        return $null
+    }
+
+    $user = $response.value[0]
+    
+    $uri = "https://graph.microsoft.com/v1.0/users/$($user.id)/appRoleAssignments?`$filter=resourceDisplayName eq 'Guest Inviter'"
     $roles = Invoke-RestMethod -Uri $uri -Headers $headers -Method GET
     #write-host $uri
     #write-host $($roles | convertto-Json -depth 10)
-    $response | Add-Member -NotePropertyName 'isGuestInviter' -NotePropertyValue (($roles.value.Count -eq 0) ? $false : $true) -Force
-    return $response
+    $user | Add-Member -NotePropertyName 'isGuestInviter' -NotePropertyValue (($roles.value.Count -eq 0) ? $false : $true) -Force
+    return $user
 }
 
 # ===========================
@@ -142,10 +150,26 @@ function Get-EntraUserInfo {
 # ===========================
 function Compare-Casing {
     param($DevOpsUser, $EntraUser)
-    if ($DevOpsUser.properties.Account."`$value" -cne $EntraUser.userPrincipalName) 
+    $upn = $EntraUser.userPrincipalName
+    
+
+    if ($upn -like "*#EXT#*") 
+    {
+        Write-Host "External user detected, converting UPN format" -ForegroundColor DarkGray
+        Write-Host "Entra UPN     : $upn" -ForegroundColor DarkGray
+        $upnParts = $upn -split "#EXT#"
+        $localPart = $upnParts[0].Replace("_", "@")
+        $upn = $localPart
+        Write-Host "Effective UPN : $upn" -ForegroundColor DarkGray
+    }
+
+    if ($DevOpsUser.properties.Account."`$value" -cne $upn ) 
     {
         Write-Host "--------------------------------------------------------------------------------------------"
-        Write-Host "Casing mismatch detected: DevOps='$($DevOpsUser.properties.Account."`$value")' vs Entra='$($EntraUser.userPrincipalName)'" -ForegroundColor Red
+        Write-Host "Casing mismatch detected: " -ForegroundColor Red
+        Write-Host "DevOps='$($DevOpsUser.properties.Account."`$value")'" -ForegroundColor Red
+        Write-Host "vs" -ForegroundColor Red
+        Write-Host "Entra='$($upn)'" -ForegroundColor Red
         Write-Host "This can cause issues when attempting to read info from entra such a s groups or users."
         Write-Host "Consider updating the UPN casing in Entra to match DevOps."
         Write-Host "If you are not able to do this you can open a support case with Microsoft to have them"
@@ -203,7 +227,7 @@ function Compare-TenantId {
 # ===========================
 function Compare-UserType {
     param($DevOpsUser, $EntraUser)
-    $entraType = if ($null -eq $EntraUser.externalUserState) { "Member" } else { "Guest" }
+    $entraType = "$($EntraUser.userType)"
     $devopsType = if ($DevOpsUser.properties.metaTypeId -eq 1) { "Guest" } elseif ($DevOpsUser.properties.metaTypeId -eq 0) { "Unknown" } else { "Member" }
     if ($entraType -ne $devopsType) 
     {
@@ -254,20 +278,38 @@ function Compare-GuestRoles
 # ===========================
 function Compare-GuestInfo {
     param($DevOpsUser, $EntraUser)
-    if (($EntraUser.metaTypeId -eq 1) -and ($EntraUser.userPrincipalName -cne $EntraUser.mail)) 
+    $upn = $EntraUser.userPrincipalName
+    
+    if ($EntraUser.userType -eq "Guest")  
     {
-        Write-Host "--------------------------------------------------------------------------------------------"
-        Write-Host "Guest User Email and UPN mismatch detected: UPN='$($EntraUser.userPrincipalName)' vs Email='$($EntraUser.mail)'"  -ForegroundColor Red
-        Write-Host "This can cause issues with login, authorization, and access to resources."
-        Write-Host "If you are experiencing issues please:" 
-        Write-Host "  - Remove the Devops user"
-        Write-Host "  - Remove the guest user from Entra"
-        Write-Host "  - Re-invite the User to the Entra Tenant (should be new OID)"
-        Write-Host "  - Ensure that the new user's UPN is correct, the email is blank or The same as the UPN"
-        Write-Host "  - Add the new user to DevOps"
-        Write-Host "  "
-        Write-Host "If you are still experiencing issues please open a support case with Microsoft and include this output."
-        Write-Host "--------------------------------------------------------------------------------------------"
+        
+        if ($upn -like "*#EXT#*") 
+        {
+            #Write-Host "External user detected, converting UPN format" -ForegroundColor DarkGray
+            #Write-Host "Entra UPN     : $upn" -ForegroundColor  DarkGray
+            $upnParts = $upn -split "#EXT#"
+            $localPart = $upnParts[0].Replace("_", "@")
+            $upn = $localPart
+            #Write-Host "Effective UPN : $upn" -ForegroundColor DarkGray
+        }
+        if ($upn -cne $EntraUser.mail)
+        {
+            Write-Host "--------------------------------------------------------------------------------------------"
+            Write-Host "Guest User Email and UPN mismatch detected: " -ForegroundColor Red
+            Write-Host "UPN='$($upn)' " -ForegroundColor Red
+            Write-Host "vs" -ForegroundColor Red
+            Write-Host "Email='$($EntraUser.mail)'"  -ForegroundColor Red
+            Write-Host "This can cause issues with login, authorization, and access to resources."
+            Write-Host "If you are experiencing issues please:" 
+            Write-Host "  - Remove the Devops user"
+            Write-Host "  - Remove the guest user from Entra"
+            Write-Host "  - Re-invite the User to the Entra Tenant (should be new OID)"
+            Write-Host "  - Ensure that the new user's UPN is correct, the email is blank or The same as the UPN"
+            Write-Host "  - Add the new user to DevOps"
+            Write-Host "  "
+            Write-Host "If you are still experiencing issues please open a support case with Microsoft and include this output."
+            Write-Host "--------------------------------------------------------------------------------------------"
+        }
     }
     else
     {
@@ -301,7 +343,8 @@ try
     Write-Host "Entra User Principal Name   : $($entraUser.userPrincipalName)"
     Write-Host "Entra User Email            : $($entraUser.mail)"
     Write-Host "Entra User OID              : $($entraUser.id)"
-    Write-Host "Entra User Type             : $($null -eq $entraUser.externalUserState ? "Member" : "Guest")"
+    Write-Host "Entra User Type             : $($entraUser.userType)"
+    Write-Host "Entra User State            : $($null -eq $entraUser.externalUserState ? "Internal" : "External - $($entraUser.externalUserState)")"
     Write-Host "Entra User is Guest Inviter : $($entraUser.isGuestInviter)"
     Write-Host
     Write-Host "--------------------------------------------------------------------------------------------"
@@ -321,10 +364,10 @@ try
     $devLicense = Get-DevOpsUserLicense -OrgName $OrgName -DevOpsToken $tokens.DevOps -UserId $devOpsUser.id
     if ($null -ne $devLicense.accessLevel) {
         $alc = $devLicense.accessLevel
-        Write-Host "License type                : $($alc.accountLicenseType)"
+        Write-Host "Licensing Source            : $($alc.licensingSource)"
+        #Write-Host "License type                : $($alc.accountLicenseType)"
         write-Host "License Display Name        : $($alc.licenseDisplayName)"
-    #    Write-Host "Licensing Source            : $($alc.licensingSource)"
-    #    Write-Host "Assignment Source           : $($alc.assignmentSource)"
+        #Write-Host "Assignment Source           : $($alc.assignmentSource)"
         if ($alc.status -ne "active") {
             Write-Host "DevOps User License Status  : $($alc.status)"
             Write-Host "            Status Message  : $($alc.statusMessage) "
@@ -348,9 +391,13 @@ try
     Write-Host
 }
 catch {
-    Write-Host "An error occurred: $_" -ForegroundColor Red
+    $caught = $_.ToString()
+    Write-Host "An error occurred: `r`n$($caught)" -ForegroundColor Red
     Write-Host
     Write-Host "Please verify that you are logged in with the correct account that has access to both Entra and Azure DevOps." -ForegroundColor Yellow
     Write-Host "You can try running the script again with the -ForceLogout parameter to clear cached credentials." -ForegroundColor Yellow
     Write-Host
 }
+
+
+
