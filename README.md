@@ -32,8 +32,23 @@ The script uses filter queries to look up users in Microsoft Graph, which provid
 When checking a guest user, the script will:
 - Verify the user's type (Member vs. Guest)
 - Check if the user has the **Guest Inviter** role in Entra (required for guest users to invite other external users to Azure DevOps)
+  - If missing, prompts to attempt adding the role via Graph API
+  - If added successfully, instructions on how to verify the change
 - Validate that the UPN and email are properly configured (mismatches can cause login/permission issues)
 - Detect and display effective UPN formats for external users
+
+### Fixing UPN Casing Mismatches
+When a casing mismatch is detected between Entra and Azure DevOps UPNs, the script now:
+- Explains the issue and its impact on Entra group/user queries
+- Offers to automatically update the Entra UPN to match DevOps casing
+- Provides detailed instructions for the user to propagate the change:
+  - Log out of all Azure services and clear browser cache
+  - Log into Azure DevOps with the corrected UPN
+  - Changes should sync within a few minutes
+
+Alternatively, if you prefer a different casing in DevOps, the script explains:
+- The manual process to force DevOps to recognize a different casing (changing to a temporary UPN, having the user log in, changing back to the desired casing, then having the user log in again)
+- How to open a support case with Microsoft for manual UPN casing updates in DevOps
 
 ### Force logout / switching accounts
 --------------------------------
@@ -51,8 +66,14 @@ What the script prints
 - Logged-in user info (the account used to fetch tokens)
 - Entra tenant and user details (display name, id, UPN, email, OID, member/guest state, Guest Inviter role)
 - Azure DevOps identity details (VSID, tenant id, account name, email, OID, DevOps user type)
-- License / entitlement info from the User Entitlements API
-- Profile state and, on API errors, the Profiles API error payload including `customProperties` and `message` (useful for diagnosing access denied scenarios)
+- License / entitlement info from the User Entitlements API (licensing source, license type, last accessed date)
+- Known scenarios validation:
+  - **UPN Casing**: Detects and optionally fixes mismatches with automatic Entra updates
+  - **OID**: Validates that the object ID matches between Entra and DevOps
+  - **Tenant ID**: Ensures the user is in the correct tenant
+  - **User Type**: Verifies consistency between internal/guest user types
+  - **Guest Inviter Role**: For guest users, checks if they have the role needed to invite other guests (with option to add)
+  - **Guest Email/UPN**: For guest users, validates proper UPN and email configuration
 
 ### Example output
 --------------

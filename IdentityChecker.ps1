@@ -53,7 +53,7 @@ function Test-Prerequisites {
 # with the smae org... but we need a way to notice if thecontext has changed
 # ===========================
 function Get-AccessTokens {
-    $graphToken = Get-AzAccessToken -ResourceUrl "https://graph.microsoft.com/" 
+    $graphToken = Get-AzAccessToken -ResourceUrl "https://graph.microsoft.com/"
     $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($graphToken.Token))
     $AuthHeader = "Bearer $plaintoken" 
     $graphToken | Add-Member -NotePropertyName 'AuthHeader' -NotePropertyValue $AuthHeader -Force
@@ -178,10 +178,46 @@ function Get-EntraUserInfo {
 }
 
 # ===========================
+# Function: Update-EntraUserPrincipalName
+# ===========================
+function Update-EntraUserPrincipalName {
+    param([psobject]$GraphToken, [string]$UserId, [string]$oldUPN, [string]$NewUPN)
+    
+    try {
+        $uri = "https://graph.microsoft.com/v1.0/users/$UserId"
+        $headers = @{
+            Authorization           = $GraphToken.AuthHeader
+            "X-TFS-FedAuthRedirect" = "Suppress"
+            "Content-Type"          = "application/json"
+        }
+        if ($oldUPN -like "*#EXT#*")
+        {
+            Write-Host "Converting UPN to external user format for Entra" -ForegroundColor DarkGray
+            $upnParts = $oldUPN -split "#EXT#"
+            $localPart = $NewUPN.Replace("@", "_")
+            $domainPart = $upnParts[1]
+            $NewUPN = "$($localPart)#EXT#$($domainPart)"
+            Write-Host "Converted UPN : $NewUPN" -ForegroundColor DarkGray
+        }
+        $body = @{
+            userPrincipalName = $NewUPN
+        } | ConvertTo-Json
+        
+        Invoke-RestMethod -Uri $uri -Headers $headers -Method Patch -Body $body | Out-Null
+        Write-Host "Successfully updated UPN in Entra to: $NewUPN" -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "Failed to update UPN in Entra: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
+    }
+}
+
+# ===========================
 # Function: Compare-Casing
 # ===========================
 function Compare-Casing {
-    param($DevOpsUser, $EntraUser)
+    param($DevOpsUser, $EntraUser, $GraphToken)
     $upn = $EntraUser.userPrincipalName
     
 
@@ -202,10 +238,39 @@ function Compare-Casing {
         Write-Host "DevOps = '$($DevOpsUser.properties.Account."`$value")'" -ForegroundColor Red
         Write-Host " vs" -ForegroundColor Red
         Write-Host "Entra  = '$($upn)'" -ForegroundColor Red
-        Write-Host "This can cause issues when attempting to read info from entra such a s groups or users."
-        Write-Host "Consider updating the UPN casing in Entra to match DevOps."
-        Write-Host "If you are not able to do this you can open a support case with Microsoft to have them"
-        Write-Host "update the UPN casing in DevOps to match Entra and include this output."
+        Write-Host ""
+        Write-Host "This mismatch can cause issues when attempting to read info from Entra such as groups or users."
+        Write-Host "The recommended fix is to update the UPN in Entra to match DevOps casing."
+        Write-Host ""
+        Write-Host "If the casing in DevOps is not the desired format, you can open a support case to"
+        Write-Host "have Microsoft update the UPN casing in DevOps to match Entra. Or you can follow these"
+        Write-Host "steps to force the update to Devops (if the user is an Internal Member)"
+        Write-Host "  1. Change the UPN in Entra to a temporary different value (e.g., append '_temp'"
+        Write-Host "     to pre '@' portion of the UPN)"
+        Write-Host "  2. Have the user log in to DevOps with the temporary UPN to update the DevOps data"
+        Write-Host "     *Please use a private browsing session to avoid cached credentials.*"
+        Write-Host "  3. Change the UPN in Entra back to the original content but with  desired casing"
+        Write-Host "  4. Have the user log in to DevOps again to update the DevOps data with the correct" 
+        Write-Host "     casing.  *Log out of all Azure services (including DevOps, Azure Portal, etc.)"
+        Write-Host "     and clear browser cache/cookies for *.dev.azure.com and *.microsoft.com*"
+        Write-Host ""
+        $response = Read-Host "Would you like to update the Entra UPN to match DevOps? (Y/N)"
+        if ($response -eq 'Y' -or $response -eq 'y') {
+            $devopsUPN = $DevOpsUser.properties.Account."`$value"
+            if (Update-EntraUserPrincipalName -GraphToken $GraphToken -UserId $EntraUser.id -OldUPN $EntraUser.userPrincipalName -NewUPN $devopsUPN) {
+                Write-Host ""
+                Write-Host "To propagate this change to Azure DevOps, the user must:" 
+                Write-Host "  1. Log out of all Azure services (including DevOps, Azure Portal, etc.)"
+                Write-Host "  2. Clear browser cache/cookies for *.dev.azure.com and *.microsoft.com"
+                Write-Host "  3. Log into Azure DevOps with the corrected UPN: $devopsUPN"
+                Write-Host "  4. Once successfully logged in, the casing should be synced to DevOps"
+                Write-Host ""
+                Write-Host "Note: This process may take a few minutes to fully propagate." 
+            }
+        }
+        else {
+
+        }
         Write-Host "--------------------------------------------------------------------------------------------"
     } 
     else 
@@ -247,12 +312,13 @@ function Compare-TenantId {
     {
         Write-Host "--------------------------------------------------------------------------------------------"
         Write-Host "Tenant ID mismatch detected:" -ForegroundColor Red
-        Write-Host "DevOps = '$($DevOpsUser.properties.Domain."`$value")'"
+        Write-Host "Tenant mismatch detected:"  -ForegroundColor Red 
+        Write-Host "DevOps backed by = '$($DevOpsUser.properties.Domain."`$value")'"
         Write-Host " vs" 
-        Write-Host "Entra  = '$($TenantId.Id)'"
+        Write-Host "Entra user is in = '$($TenantId.Id)'"
         Write-Host "This WILL cause issues with login, authorization, and access to resources."
-        Write-Host "Please verify that the user is logging in to the user in the correct tenant."
-        Write-Host "It can be simpler to see this if you use a private browsing session to login."
+        Write-Host "Please verify that the user is logging in using the the correct tenant."
+        Write-Host "It can be simpler to see this if you use a new private browsing session to login."
         Write-Host "If this does not resolve the issue, please open a support case with Microsoft and include" 
         Write-Host "this output."
         Write-Host "--------------------------------------------------------------------------------------------"
@@ -277,9 +343,9 @@ function Compare-UserType {
         Write-Host "DevOps = '$devopsType'"
         Write-Host " vs" 
         Write-Host "Entra  = '$entraType'"  
-        Write-Host "This can cause issues with login, authorization, and access to resources."
-        Write-Host "If you are experiencing issues please open a support case with Microsoft and include this" 
-        Write-Host "output."
+        Write-Host "Please have this user log into DevOps (if possible) to ensure that any changes in Entra"
+        Write-Host "are fully synched to DevOps, then re-run this script to see if this resolves the issue."
+        Write-Host "If it does not please open a support case with Microsoft and include this output."
         Write-Host "--------------------------------------------------------------------------------------------"
     } 
     else 
@@ -475,7 +541,7 @@ try
     Write-Host "--------------------------------------------------------------------------------------------"
     Write-Host "Checking for Known Scenarios..."
     Write-Host "--------------------------------------------------------------------------------------------"
-    Compare-Casing     -DevOpsUser $devOpsUser -EntraUser $entraUser
+    Compare-Casing     -DevOpsUser $devOpsUser -EntraUser $entraUser -GraphToken $tokens.Graph
     Compare-OID        -DevOpsUser $devOpsUser -EntraUser $entraUser
     Compare-TenantId   -DevOpsUser $devOpsUser -TenantId  $tenantInfo
     Compare-UserType   -DevOpsUser $devOpsUser -EntraUser $entraUser
