@@ -134,14 +134,46 @@ function Get-EntraUserInfo {
         Write-Warning "User '$UserPrincipalName' not found in Entra."
         return $null
     }
-
-    $user = $response.value[0]
+    $index = 0
+    if ($response.value.Count -gt 1) {
+        Write-Warning "Multiple users found in Entra with UPN or Mail matching '$UserPrincipalName'."
+        foreach ($value in $response.value) {
+            Write-Host "User $index UPN: $($value.userPrincipalName)"
+            Write-Host "User $index Mail: $($value.mail)"
+            Write-Host "User $index Id : $($value.id)"
+            $index++
+        }
+        do {
+            $index = Read-Host "Multiple users found. Please enter the index of the user to select (0 to $($response.value.Count - 1))"
+        }   
+        while (-not ($index -as [int]) -or $index -lt 0 -or $index -ge $response.value.Count)
+    }
+    $user = $response.value[$index]
     
-    $uri = "https://graph.microsoft.com/v1.0/users/$($user.id)/appRoleAssignments?`$filter=resourceDisplayName eq 'Guest Inviter'"
-    $roles = Invoke-RestMethod -Uri $uri -Headers $headers -Method GET
-    #write-host $uri
-    #write-host $($roles | convertto-Json -depth 10)
-    $user | Add-Member -NotePropertyName 'isGuestInviter' -NotePropertyValue (($roles.value.Count -eq 0) ? $false : $true) -Force
+    # Get the Guest Inviter role details from the directory
+    $uri = "https://graph.microsoft.com/v1.0/directoryRoles?`$filter=displayName eq 'Guest Inviter'"
+    $headers = @{
+        Authorization           = $GraphToken.AuthHeader
+        "X-TFS-FedAuthRedirect" = "Suppress"
+        ConsistencyLevel        = "eventual"
+    }
+    
+    $roleResponse = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+    
+    if ($roleResponse.value.Count -eq 0) {
+        Write-Host "Guest Inviter role not found in directory. You may need to activate this role first." -ForegroundColor Yellow
+        return $false
+    }
+    $guestInviterRole = $roleResponse.value[0]
+    $uri = "https://graph.microsoft.com/v1.0/directoryRoles/$($guestInviterRole.id)/members?`$filter=id eq '$($user.id)'"
+    try
+    { 
+        $roles = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+    }
+    catch {
+        $roles = $null
+    }
+    $user | Add-Member -NotePropertyName 'isGuestInviter' -NotePropertyValue (($null -eq $roles) -or ($roles.value.Count -eq 0) ? $false : $true) -Force
     return $user
 }
 
@@ -167,9 +199,9 @@ function Compare-Casing {
     {
         Write-Host "--------------------------------------------------------------------------------------------"
         Write-Host "Casing mismatch detected: " -ForegroundColor Red
-        Write-Host "DevOps='$($DevOpsUser.properties.Account."`$value")'" -ForegroundColor Red
-        Write-Host "vs" -ForegroundColor Red
-        Write-Host "Entra='$($upn)'" -ForegroundColor Red
+        Write-Host "DevOps = '$($DevOpsUser.properties.Account."`$value")'" -ForegroundColor Red
+        Write-Host " vs" -ForegroundColor Red
+        Write-Host "Entra  = '$($upn)'" -ForegroundColor Red
         Write-Host "This can cause issues when attempting to read info from entra such a s groups or users."
         Write-Host "Consider updating the UPN casing in Entra to match DevOps."
         Write-Host "If you are not able to do this you can open a support case with Microsoft to have them"
@@ -190,9 +222,14 @@ function Compare-OID {
     if ($DevOpsUser.properties."http://schemas.microsoft.com/identity/claims/objectidentifier"."`$value" -ne $EntraUser.Id) 
     {
         Write-Host "--------------------------------------------------------------------------------------------"
-        Write-Host "OID mismatch detected: DevOps='$($DevOpsUser.properties."http://schemas.microsoft.com/identity/claims/objectidentifier"."`$value")' vs Entra='$($EntraUser.id)'"  -ForegroundColor Red
+        Write-Host "OID mismatch detected:" -ForegroundColor Red
+        Write-Host "DevOps = '$($DevOpsUser.properties."http://schemas.microsoft.com/identity/claims/objectidentifier"."`$value")'"
+        Write-Host " vs" 
+        Write-Host "Entra  = '$($EntraUser.id)'"  
         Write-Host "This can cause issues with login, authorization, and access to resources."
-        Write-Host "If you are experiencing issues please open a support case with Microsoft and include this output."
+        Write-Host "Please have this user log into DevOps (if possible) to ensure that any changes in Entra"
+        Write-Host "are fully synched to DevOps, then re-run this script to see if this resolves the issue."
+        Write-Host "If it does not please open a support case with Microsoft and include this output."
         Write-Host "--------------------------------------------------------------------------------------------"
     } 
     else 
@@ -209,11 +246,15 @@ function Compare-TenantId {
     if ($DevOpsUser.properties.Domain."`$value" -ne $TenantId.Id) 
     {
         Write-Host "--------------------------------------------------------------------------------------------"
-        Write-Host "Tenant ID mismatch detected: DevOps='$($DevOpsUser.properties.Domain."`$value")' vs Entra='$($TenantId.Id)'"  -ForegroundColor Red
+        Write-Host "Tenant ID mismatch detected:" -ForegroundColor Red
+        Write-Host "DevOps = '$($DevOpsUser.properties.Domain."`$value")'"
+        Write-Host " vs" 
+        Write-Host "Entra  = '$($TenantId.Id)'"
         Write-Host "This WILL cause issues with login, authorization, and access to resources."
         Write-Host "Please verify that the user is logging in to the user in the correct tenant."
         Write-Host "It can be simpler to see this if you use a private browsing session to login."
-        Write-Host "If this does not resolve the issue, please open a support case with Microsoft and include this output."
+        Write-Host "If this does not resolve the issue, please open a support case with Microsoft and include" 
+        Write-Host "this output."
         Write-Host "--------------------------------------------------------------------------------------------"
     } 
     else 
@@ -232,14 +273,58 @@ function Compare-UserType {
     if ($entraType -ne $devopsType) 
     {
         Write-Host "--------------------------------------------------------------------------------------------"
-        Write-Host "User Type mismatch detected: DevOps='$devopsType' vs Entra='$entraType'"  -ForegroundColor Red
+        Write-Host "User Type mismatch detected:"  -ForegroundColor Red 
+        Write-Host "DevOps = '$devopsType'"
+        Write-Host " vs" 
+        Write-Host "Entra  = '$entraType'"  
         Write-Host "This can cause issues with login, authorization, and access to resources."
-        Write-Host "If you are experiencing issues please open a support case with Microsoft and include this output."
+        Write-Host "If you are experiencing issues please open a support case with Microsoft and include this" 
+        Write-Host "output."
         Write-Host "--------------------------------------------------------------------------------------------"
     } 
     else 
     {
         Write-Host "User Type matches." -ForegroundColor Green
+    }
+}
+
+# ===========================
+# Function: Add-GuestInviterRole
+# ===========================
+function Add-GuestInviterRole {
+    param([psobject]$GraphToken, [string]$UserId)
+    
+    try {
+        # Get the Guest Inviter role details from the directory
+        $uri = "https://graph.microsoft.com/v1.0/directoryRoles?`$filter=displayName eq 'Guest Inviter'"
+        $headers = @{
+            Authorization           = $GraphToken.AuthHeader
+            "X-TFS-FedAuthRedirect" = "Suppress"
+            ConsistencyLevel        = "eventual"
+        }
+        
+        $roleResponse = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+        
+        if ($roleResponse.value.Count -eq 0) {
+            Write-Host "Guest Inviter role not found in directory. You may need to activate this role first." -ForegroundColor Yellow
+            return $false
+        }
+        
+        $guestInviterRole = $roleResponse.value[0]
+        
+        # Add the user to the Guest Inviter role
+        $uri = "https://graph.microsoft.com/v1.0/directoryRoles/$($guestInviterRole.id)/members/`$ref"
+        $body = @{
+            "@odata.id" = "https://graph.microsoft.com/v1.0/users/$UserId"
+        } | ConvertTo-Json
+        
+        Invoke-RestMethod -Uri $uri -Headers $headers -Method Post -Body $body -ContentType "application/json" | Out-Null
+        Write-Host "Successfully added Guest Inviter role to user." -ForegroundColor Green
+        return $true
+    }
+    catch {
+        Write-Host "Failed to add Guest Inviter role: $($_.Exception.Message)" -ForegroundColor Red
+        return $false
     }
 }
 
@@ -250,16 +335,24 @@ function Compare-GuestRoles
 {
 #     https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/add-external-user?view=azure-devops#invite-external-user
 #     A guest user can add other guest users to the organization after being granted the Guest Inviter role in Microsoft Entra ID.
-     param($DevOpsUser, $EntraUser)
+     param($DevOpsUser, $EntraUser, $GraphToken)
 
-     if ($EntraUser.metaTypeId -eq 1)
+     if ($EntraUser.userType -eq "Guest")
      {
          if ($EntraUser.isGuestInviter -eq $false)
          {
              Write-Host "--------------------------------------------------------------------------------------------"
-             Write-Host "Guest User does not have 'Guest Inviter' role in Entra."  -ForegroundColor Yellow
-             Write-Host "Without this role the guest user cannot invite other guest users to the Azure DevOps organization."
-             Write-Host "If you are experiencing issues inviting other guest users please assign the 'Guest Inviter' role to this user in Entra."
+             Write-Host "Guest User does not have 'Guest Inviter' role in Entra."  -ForegroundColor Red
+             Write-Host "Without this role the guest user cannot invite other guest users to the Azure DevOps org."
+             
+             $response = Read-Host "Would you like to attempt to add the Guest Inviter role to this user? (Y/N)"
+             if ($response -eq 'Y' -or $response -eq 'y') {
+                 Add-GuestInviterRole -GraphToken $GraphToken -UserId $EntraUser.id
+             }
+             else {
+                 Write-Host "If you are experiencing issues inviting other guest users please assign the 'Guest Inviter'" 
+                 Write-Host "role to this user in Entra."
+             }
              Write-Host "--------------------------------------------------------------------------------------------"
          }
          else
@@ -296,9 +389,9 @@ function Compare-GuestInfo {
         {
             Write-Host "--------------------------------------------------------------------------------------------"
             Write-Host "Guest User Email and UPN mismatch detected: " -ForegroundColor Red
-            Write-Host "UPN='$($upn)' " -ForegroundColor Red
-            Write-Host "vs" -ForegroundColor Red
-            Write-Host "Email='$($EntraUser.mail)'"  -ForegroundColor Red
+            Write-Host "UPN   = '$($upn)' " -ForegroundColor Red
+            Write-Host " vs" -ForegroundColor Red
+            Write-Host "Email = '$($EntraUser.mail)'"  -ForegroundColor Red
             Write-Host "This can cause issues with login, authorization, and access to resources."
             Write-Host "If you are experiencing issues please:" 
             Write-Host "  - Remove the Devops user"
@@ -307,7 +400,8 @@ function Compare-GuestInfo {
             Write-Host "  - Ensure that the new user's UPN is correct, the email is blank or The same as the UPN"
             Write-Host "  - Add the new user to DevOps"
             Write-Host "  "
-            Write-Host "If you are still experiencing issues please open a support case with Microsoft and include this output."
+            Write-Host "If you are still experiencing issues please open a support case with Microsoft and include" 
+            Write-Host "this output."
             Write-Host "--------------------------------------------------------------------------------------------"
         }
     }
@@ -385,7 +479,7 @@ try
     Compare-OID        -DevOpsUser $devOpsUser -EntraUser $entraUser
     Compare-TenantId   -DevOpsUser $devOpsUser -TenantId  $tenantInfo
     Compare-UserType   -DevOpsUser $devOpsUser -EntraUser $entraUser
-    Compare-GuestRoles -DevOpsUser $devOpsUser -EntraUser $entraUser
+    Compare-GuestRoles -DevOpsUser $devOpsUser -EntraUser $entraUser -GraphToken $tokens.Graph
     Compare-GuestInfo  -DevOpsUser $devOpsUser -EntraUser $entraUser
     Write-Host
     Write-Host

@@ -3,8 +3,10 @@
 IdentityChecker is a small PowerShell helper that gathers Microsoft Entra (Azure AD) and Azure DevOps identity data for a given user UPN, then runs a set of checks to surface common identity issues (UPN casing, OID mismatch, tenant mismatch, guest-role problems, license info, and profile status).
 
 ### Quick overview
-- Collects Microsoft Graph user info (UPN, e-mail, object id, guest/member state, roles).
+- Collects Microsoft Graph user info using filter queries for robust external/guest user lookup (UPN, e-mail, object id, guest/member state, roles).
+- Handles multiple matches gracefully with user selection when UPN or email matches multiple users.
 - Collects Azure DevOps identity and entitlement info (VSID, tenant, account, OID, user type, license/entitlement).
+- Checks Guest Inviter role status for guest users to determine if they can invite other external users.
 - Calls the Azure DevOps Profiles API and surfaces profile state and profile error messages (useful for Access Denied / permission errors).
 
 ### Prerequisites
@@ -21,6 +23,17 @@ pwsh -NoProfile -ExecutionPolicy Bypass -File 'IdentityChecker.ps1'
 ```
 
 3. Enter the Azure DevOps organization name and the UPN to inspect when prompted.
+   - The script supports both internal and external/guest user UPNs, including formats like `user_company.com#EXT#@tenant.onmicrosoft.com`
+   - If multiple users are found matching the UPN or email, you will be prompted to select the correct user by index.
+
+### Handling External / Guest Users
+The script uses filter queries to look up users in Microsoft Graph, which provides robust support for external and guest users with special characters in their UPNs (such as `#EXT#`). 
+
+When checking a guest user, the script will:
+- Verify the user's type (Member vs. Guest)
+- Check if the user has the **Guest Inviter** role in Entra (required for guest users to invite other external users to Azure DevOps)
+- Validate that the UPN and email are properly configured (mismatches can cause login/permission issues)
+- Detect and display effective UPN formats for external users
 
 ### Force logout / switching accounts
 --------------------------------
@@ -61,6 +74,7 @@ Entra User Principal Name   : steve.rogers@contoso.com
 Entra User Email            : steve.rogers@contoso.com
 Entra User OID              : 9561209c-26db-44c8-bd86-13b18aca4414
 Entra User Type             : Member
+Entra User State            : Internal
 Entra User is Guest Inviter : False
 
 --------------------------------------------------------------------------------------------
@@ -76,7 +90,7 @@ DevOps User Type            : Member
 --------------------------------------------------------------------------------------------
 DevOps User License Info:
 --------------------------------------------------------------------------------------------
-License type                : Express
+Licensing Source            : Assignment
 License Display Name        : Basic + Test Plans
 Last Accessed Date          : 11/21/2025 10:32:15 AM
 
@@ -89,7 +103,6 @@ Tenant ID matches.
 User Type matches.
 Not a Guest User, skipping Guest Role check.
 Not a Guest User, skipping Entra Guest Info check.
-
 ```
 
 ### Troubleshooting
