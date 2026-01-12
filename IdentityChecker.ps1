@@ -1,13 +1,9 @@
-# ===========================
-# Script parameters
-# ===========================
 param(
     [switch]$ForceLogout
 )
-# ===========================
-# Function: Test-Prerequisites
-# ===========================
-function Test-Prerequisites {
+
+function Test-Prerequisites 
+{
     param([switch]$ForceLogout)
     if ($ForceLogout) {
         Write-Host "ForceLogout requested: will attempt to log out and clear cached Azure credentials." -ForegroundColor Yellow
@@ -46,13 +42,8 @@ function Test-Prerequisites {
     }
 }
 
-# ===========================
-# Function: Get-AccessTokens
-# as Azure CLI stores the credientals if you need to run this for a diffrent user we need to run AZ Login
-# not quite sure how to prompt for this as most users will want the persistant login to work 
-# with the smae org... but we need a way to notice if thecontext has changed
-# ===========================
-function Get-AccessTokens {
+function Get-AccessTokens 
+{
     $graphToken = Get-AzAccessToken -ResourceUrl "https://graph.microsoft.com/"
     $plainToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto([System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($graphToken.Token))
     $AuthHeader = "Bearer $plaintoken" 
@@ -64,10 +55,8 @@ function Get-AccessTokens {
     return @{ Graph = $graphToken; DevOps = $devopsToken }
 }
 
-# ===========================
-# Function: Get-TenantIdFromDevOps
-# ===========================
-function Get-TenantInfo {
+function Get-TenantInfo 
+{
     param([psobject]$GraphToken)
     $Graphapiurl = "https://graph.microsoft.com/v1.0/organization/$($GraphToken.TenantId)?`$select=Id,displayName"
     $headers = @{
@@ -78,10 +67,8 @@ function Get-TenantInfo {
     return $response
 }
 
-# ===========================
-# Function: Get-DevOpsUserInfo
-# ===========================
-function Get-DevOpsUserInfo {
+function Get-DevOpsUserInfo 
+{
     param([string]$OrgName, [psobject]$DevOpsToken, [string]$UserPrincipalName)
     $uri = "https://vssps.dev.azure.com/$OrgName/_apis/identities?searchFilter=General&filterValue=$UserPrincipalName&queryMembership=None&api-version=7.2-preview"
     $headers = @{
@@ -95,11 +82,8 @@ function Get-DevOpsUserInfo {
  return $response.value
 }
 
-# ===========================
-# Function: Get-DevOpsUserLicense
-# Retrieves Azure DevOps user entitlement/license for the given user id
-# ===========================
-function Get-DevOpsUserLicense {
+function Get-DevOpsUserLicense 
+{
     param([string]$OrgName, [psobject]$DevOpsToken, [string]$UserId)
     $uri = "https://vsaex.dev.azure.com/$OrgName/_apis/userentitlements/$($UserId)?api-version=7.2-preview.5"
     $headers = @{
@@ -116,10 +100,8 @@ function Get-DevOpsUserLicense {
     }
 }
 
-# ===========================
-# Function: Get-EntraUserInfo
-# ===========================
-function Get-EntraUserInfo {
+function Get-EntraUserInfo 
+{
     param([psobject]$GraphToken, [string]$UserPrincipalName)
     # Use filter query for better compatibility with external/guest users
     $uri = "https://graph.microsoft.com/v1.0/users?`$filter=((userPrincipalName eq '$([System.Uri]::EscapeDataString($UserPrincipalName))') or (Mail eq '$([System.Uri]::EscapeDataString($UserPrincipalName))'))&`$select=id,userPrincipalName,creationType,userType,externalUserState,displayName,mail"
@@ -177,10 +159,8 @@ function Get-EntraUserInfo {
     return $user
 }
 
-# ===========================
-# Function: Update-EntraUserPrincipalName
-# ===========================
-function Update-EntraUserPrincipalName {
+function Update-EntraUserPrincipalName 
+{
     param([psobject]$GraphToken, [string]$UserId, [string]$oldUPN, [string]$NewUPN)
     
     try {
@@ -213,10 +193,8 @@ function Update-EntraUserPrincipalName {
     }
 }
 
-# ===========================
-# Function: Compare-Casing
-# ===========================
-function Compare-Casing {
+function Compare-Casing 
+{
     param($DevOpsUser, $EntraUser, $GraphToken)
     $upn = $EntraUser.userPrincipalName
     
@@ -279,10 +257,8 @@ function Compare-Casing {
     }
 }
 
-# ===========================
-# Function: Compare-OID
-# ===========================
-function Compare-OID {
+function Compare-OID 
+{
     param($DevOpsUser, $EntraUser)
     if ($DevOpsUser.properties."http://schemas.microsoft.com/identity/claims/objectidentifier"."`$value" -ne $EntraUser.Id) 
     {
@@ -303,10 +279,8 @@ function Compare-OID {
     }
 }
 
-# ===========================
-# Function: Compare-TenantId    
-# ===========================
-function Compare-TenantId {
+function Compare-TenantId 
+{
     param($DevOpsUser, $TenantId)
     if ($DevOpsUser.properties.Domain."`$value" -ne $TenantId.Id) 
     {
@@ -329,10 +303,8 @@ function Compare-TenantId {
     }
 }
 
-# ===========================
-# Function: Compare-UserType    
-# ===========================
-function Compare-UserType {
+function Compare-UserType 
+{
     param($DevOpsUser, $EntraUser)
     $entraType = "$($EntraUser.userType)"
     $devopsType = if ($DevOpsUser.properties.metaTypeId -eq 1) { "Guest" } elseif ($DevOpsUser.properties.metaTypeId -eq 0) { "Unknown" } else { "Member" }
@@ -354,10 +326,8 @@ function Compare-UserType {
     }
 }
 
-# ===========================
-# Function: Add-GuestInviterRole
-# ===========================
-function Add-GuestInviterRole {
+function Add-GuestInviterRole 
+{
     param([psobject]$GraphToken, [string]$UserId)
     
     try {
@@ -394,15 +364,9 @@ function Add-GuestInviterRole {
     }
 }
 
-# ===========================
-# Function: Compare-GuestRoles
-# ===========================
 function Compare-GuestRoles 
-{
-#     https://learn.microsoft.com/en-us/azure/devops/organizations/accounts/add-external-user?view=azure-devops#invite-external-user
-#     A guest user can add other guest users to the organization after being granted the Guest Inviter role in Microsoft Entra ID.
+{    
      param($DevOpsUser, $EntraUser, $GraphToken)
-
      if ($EntraUser.userType -eq "Guest")
      {
          if ($EntraUser.isGuestInviter -eq $false)
@@ -432,10 +396,8 @@ function Compare-GuestRoles
      }
 }
 
-# ===========================
-# Function: Compare-GuestInfo
-# ===========================
-function Compare-GuestInfo {
+function Compare-GuestInfo 
+{
     param($DevOpsUser, $EntraUser)
     $upn = $EntraUser.userPrincipalName
     
@@ -477,9 +439,7 @@ function Compare-GuestInfo {
     }
 }
 
-# ===========================
-# Main Script
-# ===========================
+# Main
 try 
 {
     Test-Prerequisites -ForceLogout:$ForceLogout
